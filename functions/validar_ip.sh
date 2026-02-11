@@ -1,17 +1,20 @@
 # valida una direccion IPv4 mediante expresión regular y con ciclo for el formato de cada octeo
-validar_ip(){
+# Funcion 1: Validar formato basico de IPv4
+validar_formato_ip(){
     local ip=$1
 
+    # Verificar que tenga el patron correcto: numero.numero.numero.numero
     if [[ ! $ip =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
-        return 1  # formato incorrecto
+        return 1
     fi
 
-    for i in ${ip//./ }; do
-        # si algún octeto es mayor a 255 o menor a 0, la IP es incorrecta
-        if ((i < 0 || i > 255)); then
+    # Verificar que cada octeto este en el rango 0-255
+    local octeto
+    for octeto in ${ip//./ }; do
+        if ((octeto < 0 || octeto > 255)); then
             return 1
         fi
     done
     
-    return 0  # IP correcta
+    return 0
 }
