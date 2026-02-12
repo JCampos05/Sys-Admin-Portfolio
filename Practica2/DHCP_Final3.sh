@@ -7,10 +7,12 @@ NOMBRE_SCOPE=""
 RED=""
 MASCARA=""
 BITS_MASCARA=0
-IP_INICIO=""
-IP_FIN=""
-GATEWAY=""
-DNS=""
+IP_SERVIDOR=""        # IP que se asignara al servidor (estatica)
+IP_INICIO=""          # Primera IP del rango de clientes
+IP_FIN=""             # Ultima IP del rango de clientes
+GATEWAY=""            # Gateway (Opcional)
+DNS_PRIMARIO=""       # DNS Primario (Opcional)
+DNS_SECUNDARIO=""     # DNS Secundario (Opcional)
 LEASE_TIME=0
 #
 #   Funciones de Validacion de IP
@@ -280,7 +282,7 @@ parametros_usuario(){
     # Solicita y valida segmento de red
     while true; do
         echo ""
-        echo "Ingrese el segmento de red (ej: 192.168.100.0)"
+        echo "Ingrese el segmento de red"
         read -rp "Segmento de red: " RED
         
         echo ""
@@ -307,40 +309,73 @@ parametros_usuario(){
         break
     done
 
-    # Solicita y valida IP inicial del rango DHCP
+
+    #IP del servidor -> primera IP del rango
     while true; do
         echo ""
-        echo "Ingrese la IP donde INICIa el rango DHCP"
-        echo "Debe pertenecer al segmento: $RED/$BITS_MASCARA"
-        echo "Debe ser MAYOR que: $RED"
-        read -rp "IP Inicial: " IP_INICIO
+        echo "-----------------------------------------"
+        echo " IP Inicial"
+        echo "-----------------------------------------"
+        echo "Esta IP sera asignada ESTATICAMENTE al servidor"
+        echo "Los clientes recibiran IPs DESPUES de esta"
+        echo ""
+        read -rp "Ingrese la IP donde INICIA el rango DHCP: " IP_SERVIDOR
         
         echo ""
         # 1 -> Validar formato
-        if ! validar_formato_ip "$IP_INICIO"; then
+        if ! validar_formato_ip "$IP_SERVIDOR"; then
             echo "Formato invalido"
             continue
         fi
         
         # 2 -> Validar que pertenezca al mismo segmento
-        if ! validar_mismo_segmento "$RED" "$IP_INICIO" "$MASCARA"; then
+        if ! validar_mismo_segmento "$RED" "$IP_SERVIDOR" "$MASCARA"; then
             continue
         fi
         
         # 3 -> Validar que no sea IP de red ni broadcast
-        if ! validar_ip_no_especial "$IP_INICIO" "$RED" "$MASCARA"; then
+        if ! validar_ip_no_especial "$IP_SERVIDOR" "$RED" "$MASCARA"; then
             continue
         fi
         
-        echo "IP Inicial aceptada: $IP_INICIO"
+        echo "IP del servidor aceptada: $IP_SERVIDOR"
         break
     done
 
+
+    # Calcular automaticamente IP_INICIO para clientes
+
+    # La primera IP de clientes es: IP_SERVIDOR + 1
+    IFS='.' read -r o1 o2 o3 o4 <<< "$IP_SERVIDOR"
+    local nuevo_o4=$((o4 + 1))
+    
+    # Si se pasa de 255, incrementar el tercer octeto
+    if [ "$nuevo_o4" -gt 255 ]; then
+        nuevo_o4=0
+        o3=$((o3 + 1))
+        if [ "$o3" -gt 255 ]; then
+            o3=0
+            o2=$((o2 + 1))
+            if [ "$o2" -gt 255 ]; then
+                o2=0
+                o1=$((o1 + 1))
+            fi
+        fi
+    fi
+    
+    IP_INICIO="$o1.$o2.$o3.$nuevo_o4"
+    
+    echo ""
+    echo "-----------------------------------------"
+    echo " Rango para Clientes"
+    echo "-----------------------------------------"
+    echo "Primera IP disponible para clientes: $IP_INICIO"
+    echo "(Esta IP fue calculada automaticamente)"
+    echo ""
+
     # Solicita y valida IP final del rango DHCP
     while true; do
-        echo ""
-        echo "Ingrese la IP donde FINALIZa el rango DHCP"
-        echo "Debe pertenecer al segmento: $RED/$BITS_MASCARA"
+        echo "Ingrese la IP donde FINALIZA el rango DHCP"
         echo "Debe ser MAYOR que: $IP_INICIO"
         read -rp "IP Final: " IP_FIN
         
@@ -361,7 +396,7 @@ parametros_usuario(){
             continue
         fi
         
-        # 4 -> ✅ VALIDACION CORREGIDA - Compara IPs completas
+        # 4 -> Validar que IP_FIN sea MAYOR que IP_INICIO
         if ! validar_rango_ips "$IP_INICIO" "$IP_FIN"; then
             continue
         fi
@@ -370,27 +405,37 @@ parametros_usuario(){
         break
     done
 
-    # Solicita y valida Gateway
+    # Gateway Opcional
     while true; do
         echo ""
-        echo "Ingrese la IP del Gateway (puerta de enlace)"
-        echo "Debe pertenecer al segmento: $RED/$BITS_MASCARA"
+        echo "-----------------------------------------"
+        echo " Gateway (Opcional)"
+        echo "-----------------------------------------"
+        echo "Presione ENTER para omitir"
+        echo ""
         read -rp "Gateway: " GATEWAY
         
+        # Si esta vacio, es valido
+        if [ -z "$GATEWAY" ]; then
+            echo ""
+            echo "Gateway: NO configurado"
+            break
+        fi
+        
         echo ""
-        # 1 -> Validar formato
+        # Si ingreso algo, validarlo
         if ! validar_formato_ip "$GATEWAY"; then
-            echo "Formato invalido"
+            echo "Formato invalido. Intente de nuevo o presione ENTER para omitir"
             continue
         fi
         
-        # 2 -> Validar que pertenezca al mismo segmento
         if ! validar_mismo_segmento "$RED" "$GATEWAY" "$MASCARA"; then
+            echo "Intente de nuevo o presione ENTER para omitir"
             continue
         fi
         
-        # 3 -> Validar que no sea IP de red ni broadcast
         if ! validar_ip_no_especial "$GATEWAY" "$RED" "$MASCARA"; then
+            echo "Intente de nuevo o presione ENTER para omitir"
             continue
         fi
         
@@ -398,21 +443,87 @@ parametros_usuario(){
         break
     done
 
-    # Solicita y valida DNS
+
+    # DNS Opcional (Primario y Secundario)
+
+    echo ""
+    echo "-----------------------------------------"
+    echo " DNS (Opcional)"
+    echo "-----------------------------------------"
+    echo ""
+    
+    # Preguntar si quiere configurar DNS
     while true; do
-        echo ""
-        echo "Ingrese la IP del servidor DNS"
-        read -rp "DNS: " DNS
+        read -rp "Desea configurar DNS? (s/n o ENTER para NO): " respuesta_dns
         
-        echo ""
-        # Solo validar formato, el DNS puede estar en cualquier red
-        if ! validar_formato_ip "$DNS"; then
-            echo "Formato invalido"
-            continue
+        # Si esta vacio o es 'n', no configurar DNS
+        if [ -z "$respuesta_dns" ] || [[ "$respuesta_dns" =~ ^[Nn]$ ]]; then
+            echo ""
+            echo "DNS: NO configurado"
+            DNS_PRIMARIO=""
+            DNS_SECUNDARIO=""
+            break
         fi
         
-        echo "DNS aceptado: $DNS"
-        break
+        # Si dijo que si, solicitar DNS primario
+        if [[ "$respuesta_dns" =~ ^[Ss]$ ]]; then
+            echo ""
+            echo "----- DNS Primario -----"
+            
+            while true; do
+                read -rp "DNS Primario (o ENTER para omitir): " DNS_PRIMARIO
+                
+                # Si esta vacio, no hay DNS
+                if [ -z "$DNS_PRIMARIO" ]; then
+                    echo ""
+                    echo "DNS: NO configurado"
+                    DNS_SECUNDARIO=""
+                    break 2
+                fi
+                
+                echo ""
+                # Validar DNS primario
+                if ! validar_formato_ip "$DNS_PRIMARIO"; then
+                    echo "Formato invalido. Intente de nuevo o presione ENTER para omitir"
+                    continue
+                fi
+                
+                echo "DNS Primario aceptado: $DNS_PRIMARIO"
+                break
+            done
+            
+            # Si hay DNS primario, preguntar por DNS secundario
+            if [ -n "$DNS_PRIMARIO" ]; then
+                echo ""
+                echo "----- DNS Secundario (Opcional) -----"
+                
+                while true; do
+                    read -rp "DNS Secundario (o ENTER para omitir): " DNS_SECUNDARIO
+                    
+                    # Si esta vacio, es valido
+                    if [ -z "$DNS_SECUNDARIO" ]; then
+                        echo ""
+                        echo "DNS Secundario: NO configurado"
+                        break
+                    fi
+                    
+                    echo ""
+                    # Validar DNS secundario
+                    if ! validar_formato_ip "$DNS_SECUNDARIO"; then
+                        echo "Formato invalido. Intente de nuevo o presione ENTER para omitir"
+                        continue
+                    fi
+                    
+                    echo "DNS Secundario aceptado: $DNS_SECUNDARIO"
+                    break
+                done
+            fi
+            
+            break
+        fi
+        
+        # Si no es ni s ni n, preguntar de nuevo
+        echo "Por favor ingrese 's' para SI, 'n' para NO, o ENTER para NO"
     done
 
     # Solicita y valida tiempo de concesion
@@ -440,24 +551,46 @@ parametros_usuario(){
             echo "Error: Debe ingresar un numero positivo"
         fi
     done
+    
+
+    echo ""
+    echo "-----------------------------------------"
+    echo " RESUMEN DE CONFIGURACION"
+    echo "-----------------------------------------"
+    echo "Red: $RED/$BITS_MASCARA"
+    echo "IP Servidor: $IP_SERVIDOR"
+    echo "Rango Clientes: $IP_INICIO - $IP_FIN"
+    if [ -n "$GATEWAY" ]; then
+        echo "Gateway: $GATEWAY"
+    else
+        echo "Gateway: NO configurado"
+    fi
+    if [ -n "$DNS_PRIMARIO" ]; then
+        echo "DNS Primario: $DNS_PRIMARIO"
+        if [ -n "$DNS_SECUNDARIO" ]; then
+            echo "DNS Secundario: $DNS_SECUNDARIO"
+        fi
+    else
+        echo "DNS: NO configurado"
+    fi
+    echo "Lease Time: $LEASE_TIME segundos"
+    echo "-----------------------------------------"
+    echo ""
 }
 
 configurar_interfaz_red(){
     echo ""
-    echo "-------------------------------"
+    echo "------------------------------------"
     echo " Configuracion de Interfaz de Red"
-    echo "-------------------------------"
+    echo "------------------------------------"
     echo ""
     
-    # Calcula la IP del servidor (primera IP usable del segmento)
-    IFS='.' read -r r1 r2 r3 r4 <<< "$RED"
-    local server_ip="$r1.$r2.$r3.$((r4 + 1))"
-    
-    echo "Configurando interfaz $INTERFAZ_SELECCIONADA con IP: $server_ip/$BITS_MASCARA"
+    echo "Configurando interfaz $INTERFAZ_SELECCIONADA con IP: $IP_SERVIDOR/$BITS_MASCARA"
     
     # Crea archivo de configuracion de NetworkManager
     local nm_config="/etc/NetworkManager/system-connections/$INTERFAZ_SELECCIONADA.nmconnection"
     
+    # Construir configuracion base
     sudo tee "$nm_config" > /dev/null <<EOF
 [connection]
 id=$INTERFAZ_SELECCIONADA
@@ -467,8 +600,22 @@ interface-name=$INTERFAZ_SELECCIONADA
 
 [ipv4]
 method=manual
-address1=$server_ip/$BITS_MASCARA
+address1=$IP_SERVIDOR/$BITS_MASCARA
 EOF
+
+    # Agregar gateway solo si esta configurado
+    if [ -n "$GATEWAY" ]; then
+        echo "gateway=$GATEWAY" | sudo tee -a "$nm_config" > /dev/null
+    fi
+
+    # Agregar DNS solo si estan configurados
+    if [ -n "$DNS_PRIMARIO" ]; then
+        if [ -n "$DNS_SECUNDARIO" ]; then
+            echo "dns=$DNS_PRIMARIO;$DNS_SECUNDARIO;" | sudo tee -a "$nm_config" > /dev/null
+        else
+            echo "dns=$DNS_PRIMARIO;" | sudo tee -a "$nm_config" > /dev/null
+        fi
+    fi
 
     # Establece permisos correctos
     sudo chmod 600 "$nm_config"
@@ -509,7 +656,7 @@ config_dhcp(){
         sudo cp "$dhcp_conf" "${dhcp_conf}.backup.$(date +%Y%m%d_%H%M%S)"
     fi
     
-    # Crear nueva configuracion
+    # Crear nueva configuracion - PARTE BASE
     echo "Generando archivo de configuracion..."
     sudo tee "$dhcp_conf" > /dev/null <<EOF
 # Configuracion generada automaticamente
@@ -524,27 +671,57 @@ authoritative;
 # Scope: $NOMBRE_SCOPE
 subnet $RED netmask $MASCARA {
     range $IP_INICIO $IP_FIN;
-    option routers $GATEWAY;
-    option domain-name-servers $DNS;
     option subnet-mask $MASCARA;
-}
 EOF
+
+    # Agregar gateway SOLO si esta configurado
+    if [ -n "$GATEWAY" ]; then
+        echo "    option routers $GATEWAY;" | sudo tee -a "$dhcp_conf" > /dev/null
+    fi
+
+    # Agregar DNS SOLO si estan configurados
+    if [ -n "$DNS_PRIMARIO" ]; then
+        if [ -n "$DNS_SECUNDARIO" ]; then
+            echo "    option domain-name-servers $DNS_PRIMARIO, $DNS_SECUNDARIO;" | sudo tee -a "$dhcp_conf" > /dev/null
+        else
+            echo "    option domain-name-servers $DNS_PRIMARIO;" | sudo tee -a "$dhcp_conf" > /dev/null
+        fi
+    fi
+
+    # Cerrar la configuracion del subnet
+    echo "}" | sudo tee -a "$dhcp_conf" > /dev/null
     
     echo "Archivo de configuracion creado en: $dhcp_conf"
     echo ""
+    echo "-----------------------------------------"
     echo "Resumen de la configuracion:"
+    echo "-----------------------------------------"
     echo "  - Scope: $NOMBRE_SCOPE"
     echo "  - Red: $RED/$BITS_MASCARA"
-    echo "  - Rango: $IP_INICIO - $IP_FIN"
-    echo "  - Gateway: $GATEWAY"
-    echo "  - DNS: $DNS"
+    echo "  - IP Servidor: $IP_SERVIDOR"
+    echo "  - Rango Clientes: $IP_INICIO - $IP_FIN"
+    if [ -n "$GATEWAY" ]; then
+        echo "  - Gateway: $GATEWAY"
+    else
+        echo "  - Gateway: NO configurado"
+    fi
+    if [ -n "$DNS_PRIMARIO" ]; then
+        echo "  - DNS Primario: $DNS_PRIMARIO"
+        if [ -n "$DNS_SECUNDARIO" ]; then
+            echo "  - DNS Secundario: $DNS_SECUNDARIO"
+        fi
+    else
+        echo "  - DNS: NO configurado"
+    fi
     echo "  - Tiempo de concesion: $LEASE_TIME segundos"
+    echo "-----------------------------------------"
+    echo ""
 }
 
 iniciar_dhcp(){
     echo ""
     echo "-----------------------------------"
-    echo " Iniciando Servicio DHCP"
+    echo "   Iniciando Servicio DHCP"
     echo "-----------------------------------"
     echo ""
     
@@ -575,51 +752,92 @@ iniciar_dhcp(){
 #   Monitor tiempo real
 #
 monitoreo_info(){
+    echo "-----------------------------------------"
+    echo " Monitor de Servicio DHCP"
+    echo "-----------------------------------------"
     echo ""
-    echo " Informacion de Monitoreo DHCP"
+    echo "Actualizacion: $(date '+%Y-%m-%d %H:%M:%S')"
     echo ""
     
-    echo "Estado del servicio:"
-    echo "--------------------"
-    local service_status=$(sudo systemctl is-active dhcpd)
-    if [ "$service_status" == "active" ]; then
-        echo "Servicio: ACTIVO"
-    else
-        echo "Servicio: $service_status"
+    # Verificar si existe archivo de configuracion
+    if [ ! -f /etc/dhcp/dhcpd.conf ]; then
+        echo "No hay configuracion DHCP disponible"
+        echo ""
+        return
     fi
-    echo ""
     
-    echo ""
-    echo "Configuracion de red:"
-    echo "---------------------"
-    echo "Interfaz: $INTERFAZ_SELECCIONADA"
-    ip -4 addr show "$INTERFAZ_SELECCIONADA" 2>/dev/null | grep "inet " | awk '{print "IP: " $2}'
-    echo ""
+    # Extraer informacion del scope desde dhcpd.conf
+    local subnet=$(sudo grep -oP 'subnet \K[0-9.]+' /etc/dhcp/dhcpd.conf | head -1)
+    local range=$(sudo grep -oP 'range \K[0-9. ]+' /etc/dhcp/dhcpd.conf | head -1)
     
-    echo ""
-    echo "Concesiones activas:"
-    echo "--------------------"
+    if [ -n "$subnet" ]; then
+        echo "Scope: $NOMBRE_SCOPE"
+        echo "Red: $subnet"
+        echo "Rango: $range"
+        echo ""
+    
+        # Mostrar IP del servidor DHCP
+        if [ -n "$INTERFAZ_SELECCIONADA" ]; then
+            local server_ip=$(ip -4 addr show "$INTERFAZ_SELECCIONADA" 2>/dev/null | grep -oP 'inet \K[^/]+' | head -1)
+            if [ -n "$server_ip" ]; then
+                echo "IP del servidor DHCP: $server_ip"
+                echo ""
+            fi
+        fi
+    fi
+    
+    # Procesar archivo de concesiones
     if [ -f /var/lib/dhcpd/dhcpd.leases ]; then
-        local unique_leases=$(sudo awk '/^lease/ {ip=$2} /binding state active/ {print ip}' /var/lib/dhcpd/dhcpd.leases | sort -u)
+        # Extraer concesiones activas con toda su informacion
+        local leases_info=$(sudo awk '
+        /^lease/ {
+            ip = $2
+            delete data
+        }
+        /binding state active/ {
+            data["state"] = "active"
+        }
+        /hardware ethernet/ {
+            data["mac"] = $3
+            gsub(/;/, "", data["mac"])
+        }
+        /client-hostname/ {
+            data["hostname"] = $2
+            gsub(/[";]/, "", data["hostname"])
+        }
+        /ends/ {
+            data["ends"] = $3 " " $4
+            gsub(/;/, "", data["ends"])
+        }
+        /}/ {
+            if (data["state"] == "active") {
+                printf "%s|%s|%s|%s\n", ip, (data["hostname"] ? data["hostname"] : "Sin nombre"), (data["mac"] ? data["mac"] : "N/A"), (data["ends"] ? data["ends"] : "N/A")
+            }
+        }
+        ' /var/lib/dhcpd/dhcpd.leases | sort -u -t'|' -k1,1)
         
-        if [ -n "$unique_leases" ]; then
-            echo "$unique_leases" | while read ip; do
-                echo "  - $ip"
-            done
-            
-            local count=$(echo "$unique_leases" | wc -l)
+        if [ -n "$leases_info" ]; then
+            local count=$(echo "$leases_info" | wc -l)
+            echo "Concesiones activas: $count"
             echo ""
-            echo "Total de clientes conectados: $count"
+            
+            # Mostrar cada concesion con formato detallado
+            echo "$leases_info" | while IFS='|' read -r ip hostname mac expires; do
+                echo "  IP: $ip"
+                echo "    Host: $hostname"
+                echo "    MAC: $mac"
+                echo "    Estado: ACTIVO"
+                echo "    Expira: $expires"
+                echo ""
+            done
         else
             echo "Sin concesiones activas"
+            echo ""
         fi
     else
         echo "Sin concesiones activas"
+        echo ""
     fi
-    
-    echo ""    
-    echo "Presiona Ctrl+C para salir del monitoreo"
-    echo ""
 }
 #
 #   Funciones del Menu Principal
@@ -720,16 +938,16 @@ instalar_servicio(){
     iniciar_dhcp
     
     echo ""
-    echo "--------------------------------"
+    echo "-----------------------------------------"
     echo "Instalacion y configuracion completadas"
     echo "El servicio DHCP esta activo y funcionando"
-    echo "--------------------------------"
+    echo "-----------------------------------------"
 }
 
 nueva_configuracion(){
     echo ""
     echo "--------------------------------"
-    echo "  NUEVA CONFIGURACION DHCP"
+    echo "  Nueva configuracion DHCP"
     echo "--------------------------------"
     echo ""
     echo "Esta opcion permite reconfigurar un servidor DHCP ya instalado."
@@ -767,14 +985,13 @@ nueva_configuracion(){
     
     echo ""
     echo "------------------------------------------"
-
     echo "Reconfiguracion completada exitosamente"
     echo "------------------------------------------"
 }
 
 reiniciar_servicio(){
     echo "--------------------------------"
-    echo "Reiniciando servicio DHCP..."
+    echo "  Reiniciando servicio DHCP..."
     echo "--------------------------------"
 
     
@@ -796,9 +1013,9 @@ reiniciar_servicio(){
 
 ver_configuracion_actual(){
     echo ""
-    echo "------------------------------------"
-    echo " Configuracion Actual del Servidor"
-    echo "------------------------------------"
+    echo "-----------------------------------------"
+    echo "  Configuracion Actual del Servidor"
+    echo "-----------------------------------------"
     echo ""
     
     # Verificar si el servicio esta instalado
@@ -808,7 +1025,7 @@ ver_configuracion_actual(){
     fi
     
     echo "1. Estado del Servicio:"
-    echo "----------------------"
+    echo "-----------------------------------------"
     if systemctl is-active dhcpd &> /dev/null; then
         echo "Estado: ACTIVO"
     else
@@ -824,7 +1041,7 @@ ver_configuracion_actual(){
     
     # Leer configuracion del archivo dhcpd.conf
     echo "2. Configuracion DHCP:"
-    echo "---------------------"
+    echo "-----------------------------------------"
     if [ -f /etc/dhcp/dhcpd.conf ]; then
         # Extraer subnet
         local subnet=$(sudo grep -oP 'subnet \K[0-9.]+' /etc/dhcp/dhcpd.conf | head -1)
@@ -856,7 +1073,7 @@ ver_configuracion_actual(){
     
     # Interfaz configurada
     echo "3. Interfaz de Red:"
-    echo "------------------"
+    echo "--------------------------------"
     if [ -f /etc/sysconfig/dhcpd ]; then
         local iface=$(sudo grep -oP 'DHCPDARGS="\K[^"]+' /etc/sysconfig/dhcpd)
         echo "Interfaz: $iface"
@@ -872,7 +1089,7 @@ ver_configuracion_actual(){
     
     # Estadisticas de concesiones
     echo "4. Estadisticas:"
-    echo "---------------"
+    echo "--------------------------------"
     if [ -f /var/lib/dhcpd/dhcpd.leases ]; then
         local total_leases=$(sudo grep -c "^lease" /var/lib/dhcpd/dhcpd.leases 2>/dev/null || echo "0")
         local active_leases=$(sudo awk '/^lease/ {ip=$2} /binding state active/ {print ip}' /var/lib/dhcpd/dhcpd.leases | sort -u | wc -l)
@@ -898,11 +1115,9 @@ modo_monitor(){
         sleep 5
     done
 }
-
 #
 #   Menu Principal
 #
-
 main_menu() {
     while true; do
         clear
