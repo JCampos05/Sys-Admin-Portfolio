@@ -1,0 +1,18 @@
+# Si se tiene todos los archivos en un directorio 
+scp -r directorio/ usuario@192.168.100.10:~/
+
+
+# Solo archivos .sh
+scp *.sh usuario@192.168.100.10:~/directorio/
+
+# Solo archivos .txt
+scp *.txt usuario@192.168.100.10:~/directorio/
+
+
+
+scp utils.sh \
+    verificar_instalacion.sh \
+    reiniciar_servicio.sh \
+    monitor_dns.sh \
+    main.sh \
+    usuario@192.168.100.10:~/directorio/
