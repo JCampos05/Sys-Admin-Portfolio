@@ -93,30 +93,25 @@ verificar_instalacion() {
     aputs_info "Verificando configuracion de red..."
     echo ""
     
-    # Detectar interfaz en la red 192.168.100.0/24
+    # Detectar cualquier interfaz activa con IP asignada (excluyendo loopback)
     local interface_found=""
+    local server_ip=""
+
     while IFS= read -r iface; do
         local ip=$(get_interface_ip "$iface")
-        if [[ "$ip" == 192.168.100.* ]]; then
+        if [[ "$ip" != "Sin IP" && "$ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             interface_found="$iface"
-            aputs_success "Interfaz de red DNS encontrada: $iface"
-            echo "  IP: $ip"
+            server_ip="$ip"
             break
         fi
     done < <(get_network_interfaces)
-    
+
     if [[ -z "$interface_found" ]]; then
-        aputs_warning "No se encontro interfaz en la red 192.168.100.0/24"
+        aputs_warning "No se encontro ninguna interfaz con IP asignada"
         ((advertencias++))
     else
-        # Verificar si es la IP esperada del servidor
-        local server_ip=$(get_interface_ip "$interface_found")
-        if [[ "$server_ip" == "192.168.100.10" ]]; then
-            aputs_success "IP del servidor DNS: 192.168.100.10 (correcta)"
-        else
-            aputs_warning "IP del servidor: $server_ip (esperada: 192.168.100.10)"
-            ((advertencias++))
-        fi
+        aputs_success "Interfaz de red encontrada: $interface_found"
+        echo "  IP: $server_ip"
     fi
     
     echo ""

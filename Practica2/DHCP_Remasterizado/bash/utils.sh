@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# Funciones de utilidad comunes para todos los módulos
+#   Funciones de utilidad comunes para todos los modulos
 #
 # Colores base
 RED='\033[0;31m'
@@ -10,6 +10,9 @@ BLUE='\033[0;34m'
 CYAN='\033[0;36m'
 GRAY='\033[0;90m'
 NC='\033[0m'
+
+
+
 
 # Funciones de salida formateada
 aputs_info() {
@@ -35,19 +38,19 @@ agets() {
     read -r "$var_name"
 }
 
-# Función para pausar y esperar Enter
+# Funcion para pausar y esperar Enter
 pause() {
     echo ""
     read -rp "Presiona Enter para continuar..."
 }
 
-# Función para verificar si se ejecuta con privilegios
+# Funcion para verificar si se ejecuta con privilegios
 check_privileges() {
     if [[ $EUID -eq 0 ]]; then
         aputs_warning "Detectado ejecucion como sudo"
         return 0
     fi
-    
+
     if ! sudo -n true 2>/dev/null; then
         aputs_error "Se requieren privilegios de sudo para ejecutar esta operacion"
         return 1
@@ -55,7 +58,7 @@ check_privileges() {
     return 0
 }
 
-# Función para verificar si un paquete está instalado
+# Funcion para verificar si un paquete esta instalado
 check_package_installed() {
     local package="$1"
     if rpm -qa | grep -q "^${package}-[0-9]"; then
@@ -65,7 +68,7 @@ check_package_installed() {
     fi
 }
 
-# Función para verificar si un servicio está activo
+# Funcion para verificar si un servicio esta activo
 check_service_active() {
     local service="$1"
     if sudo systemctl is-active --quiet "$service" 2>/dev/null; then
@@ -75,7 +78,7 @@ check_service_active() {
     fi
 }
 
-# Función para verificar si un servicio está habilitado
+# Funcion para verificar si un servicio esta habilitado
 check_service_enabled() {
     local service="$1"
     if sudo systemctl is-enabled --quiet "$service" 2>/dev/null; then
@@ -85,7 +88,7 @@ check_service_enabled() {
     fi
 }
 
-# Función para validar formato de IP
+# Funcion para validar formato de IP
 validate_ip() {
     local ip="$1"
     local stat=1
@@ -101,23 +104,23 @@ validate_ip() {
     return $stat
 }
 
-# Función para obtener la IP actual de una interfaz
+# Funcion para obtener la IP actual de una interfaz
 get_interface_ip() {
     local interface="$1"
     ip -4 addr show "$interface" 2>/dev/null | grep -oP 'inet \K[^/]+' || echo "Sin IP"
 }
 
-# Función para detectar interfaces de red (excluyendo loopback)
+# Funcion para detectar interfaces de red (excluyendo loopback)
 get_network_interfaces() {
     ip -o link show | awk -F': ' '{print $2}' | grep -v "lo"
 }
 
-# Función para dibujar línea separadora
+# Funcion para dibujar linea separadora
 draw_line() {
-    echo "────────────────────────────────────────"
+    echo "----------------------------------------"
 }
 
-# Función para dibujar cabecera
+# Funcion para dibujar cabecera
 draw_header() {
     local title="$1"
     draw_line
@@ -125,7 +128,7 @@ draw_header() {
     draw_line
 }
 
-# Función para verificar conectividad
+# Funcion para verificar conectividad
 check_connectivity() {
     local host="${1:-8.8.8.8}"
     if ping -c 1 -W 2 "$host" &>/dev/null; then
@@ -135,7 +138,22 @@ check_connectivity() {
     fi
 }
 
-# Exportar funciones para que estén disponibles en otros scripts
+# Funcion para verificar que un comando externo este disponible en el sistema
+# Uso: verificar_dependencia "ipcalc" "dnf install ipcalc"
+verificar_dependencia() {
+    local comando="$1"
+    local instruccion="$2"
+    if ! command -v "$comando" &>/dev/null; then
+        aputs_error "Dependencia no encontrada: $comando"
+        if [ -n "$instruccion" ]; then
+            aputs_info "Para instalarla ejecute: $instruccion"
+        fi
+        return 1
+    fi
+    return 0
+}
+
+# Exportar funciones para que esten disponibles en otros scripts
 export -f aputs_info
 export -f aputs_success
 export -f aputs_warning
@@ -152,3 +170,4 @@ export -f get_network_interfaces
 export -f draw_line
 export -f draw_header
 export -f check_connectivity
+export -f verificar_dependencia

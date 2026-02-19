@@ -52,7 +52,7 @@ validar_zonas() {
             local zona_name=$(basename "$zona_file" .rev)
             
             # Construir nombre de zona inversa desde el archivo
-            local rev_zone=$(grep -m1 "^@.*IN.*SOA" "$zona_file" 2>/dev/null | awk '{print $1}')
+            local rev_zone=$(sudo grep -m1 "file.*${zona_name}\.rev" /etc/named.conf -B2 2>/dev/null | grep "zone" | grep -oP '"[^"]+"' | tr -d '"')
             if [[ -z "$rev_zone" ]]; then
                 rev_zone="$zona_name.in-addr.arpa"
             fi

@@ -7,6 +7,7 @@
 # Cargar utilidades
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/utils.sh"
+source "${SCRIPT_DIR}/validators_dns.sh"
 
 # Función para incrementar serial
 incrementar_serial() {
@@ -18,7 +19,8 @@ incrementar_serial() {
 agregar_zona_a_named_conf() {
     local dominio="$1"
     local tipo_zona="${2:-forward}"  # forward o reverse
-    
+    local nombre_archivo="${3:-$1}"
+
     local zona_entry=""
     
     if [[ "$tipo_zona" == "forward" ]]; then
@@ -36,7 +38,7 @@ zone \"$dominio\" IN {
 // Zona inversa: $dominio
 zone \"${red_inversa}.in-addr.arpa\" IN {
     type master;
-    file \"${dominio}.rev\";
+    file \"${nombre_archivo}.rev\";
     allow-update { none; };
 };"
     fi
@@ -92,15 +94,12 @@ ${nombre_ns}    IN  A       ${ip_ns}
 EOF
 
     # Agregar WWW si se solicita
-    if [[ "$crear_www" == "s" || "$crear_www" == "S" ]]; then
-        if [[ "$tipo_www" == "cname" ]]; then
-            echo "; Registro CNAME para www" >> "$temp_file"
-            echo "www     IN  CNAME   ${dominio}." >> "$temp_file"
-        else
-            echo "; Registro A para www" >> "$temp_file"
-            echo "www     IN  A       ${ip_principal}" >> "$temp_file"
-        fi
-        echo "" >> "$temp_file"
+    if [[ "$tipo_www" == "cname" ]]; then
+        echo "; Registro CNAME para www" >> "$temp_file"
+        echo "www     IN  CNAME   ${dominio}." >> "$temp_file"
+    else
+        echo "; Registro A para www" >> "$temp_file"
+        echo "www     IN  A       ${ip_principal}" >> "$temp_file"
     fi
     
     # Agregar MX si se solicita
@@ -139,7 +138,7 @@ crear_zona_inversa() {
     local octeto2=$(echo "$ip_principal" | cut -d. -f2)
     local octeto1=$(echo "$ip_principal" | cut -d. -f1)
     
-    local red_inversa="${octeto3}.${octeto2}.${octeto1}"
+    local red_inversa="${octeto1}.${octeto2}.${octeto3}"
     local serial=$(incrementar_serial)
     
     local rev_file="/var/named/${dominio}.rev"
@@ -169,7 +168,7 @@ EOF
         rm -f "$temp_file"
         
         # Agregar zona inversa a named.conf
-        agregar_zona_a_named_conf "$red_inversa" "reverse"
+        agregar_zona_a_named_conf "$red_inversa" "reverse" "$dominio"
         
         return 0
     else
@@ -193,6 +192,11 @@ agregar_dominio_completo() {
     fi
     
     # Verificar si ya existe
+    if ! dns_validar_nombre_dominio "$nombre_dominio"; then
+        aputs_error "El dominio '$nombre_dominio' ya existe"
+        return 1
+    fi
+
     if [[ -f "/var/named/${nombre_dominio}.zone" ]]; then
         aputs_error "El dominio '$nombre_dominio' ya existe"
         return 1
@@ -201,7 +205,7 @@ agregar_dominio_completo() {
     local ip_principal
     read -rp "IP principal del dominio: " ip_principal
     
-    if ! validate_ip "$ip_principal"; then
+    if ! dns_validar_ip "$ip_principal"; then
         aputs_error "IP invalida"
         return 1
     fi
@@ -214,29 +218,57 @@ agregar_dominio_completo() {
     aputs_info "Configuracion adicional (opcional):"
     echo ""
     
-    # WWW
+    # Preguntar por www
     local crear_www
     read -rp "¿Crear registro www? (s/n) [s]: " crear_www
     crear_www=${crear_www:-s}
-    
-    local tipo_www="cname"
+
+    local tipo_www="a"
+
     if [[ "$crear_www" == "s" || "$crear_www" == "S" ]]; then
-        read -rp "  Tipo: (1) CNAME o (2) A [1]: " tipo_www_opcion
-        if [[ "$tipo_www_opcion" == "2" ]]; then
+        echo ""
+        aputs_info "Tipo de registro para www:"
+        echo "  1) CNAME (alias a ${nombre_dominio})"
+        echo "  2) A (misma IP que @: ${ip_principal})"
+        read -rp "Opcion [1]: " tipo_www_opcion
+        tipo_www_opcion=${tipo_www_opcion:-1}
+
+        if [[ "$tipo_www_opcion" == "1" ]]; then
+            tipo_www="cname"
+        else
             tipo_www="a"
         fi
     fi
     
     # NS (siempre se crea)
     local nombre_ns
-    read -rp "Nombre del servidor NS [ns1]: " nombre_ns
-    nombre_ns=${nombre_ns:-ns1}
+    local nombres_reservados=("www" "ftp" "mail" "smtp" "pop" "imap" "webmail")
+
+    while true; do
+        read -rp "Nombre del servidor NS [ns1]: " nombre_ns
+        nombre_ns=${nombre_ns:-ns1}
+    
+        local invalido=false
+        for reservado in "${nombres_reservados[@]}"; do
+            if [[ "$nombre_ns" == "$reservado" ]]; then
+                invalido=true
+                break
+            fi
+        done
+    
+        if [[ "$invalido" == "true" ]]; then
+            aputs_error "'$nombre_ns' no puede usarse como NS, genera conflicto"
+            aputs_info "Use nombres como: ns1, ns2, dns1"
+        else
+            break
+        fi
+    done
     
     local ip_ns
     read -rp "IP del servidor NS [${ip_principal}]: " ip_ns
     ip_ns=${ip_ns:-$ip_principal}
     
-    if ! validate_ip "$ip_ns"; then
+    if ! dns_validar_ip "$ip_ns"; then
         aputs_error "IP del NS invalida"
         return 1
     fi
@@ -255,19 +287,27 @@ agregar_dominio_completo() {
         nombre_mail=${nombre_mail:-mail}
         
         read -rp "  IP del servidor de correo: " ip_mail
-        if ! validate_ip "$ip_mail"; then
-            aputs_error "IP del servidor de correo invalida"
-            return 1
-        fi
+    if ! dns_validar_ip "$ip_mail"; then
+        aputs_error "IP del servidor de correo invalida"
+        return 1
+    fi
         
         read -rp "  Prioridad MX [10]: " prioridad_mx
         prioridad_mx=${prioridad_mx:-10}
+        while ! dns_validar_prioridad_mx "$prioridad_mx"; do
+            read -rp "  Prioridad MX [10]: " prioridad_mx
+            prioridad_mx=${prioridad_mx:-10}
+        done
     fi
     
     # TTL
     local ttl
     read -rp "TTL para la zona (segundos) [86400]: " ttl
     ttl=${ttl:-86400}
+    while ! dns_validar_ttl "$ttl"; do
+        read -rp "TTL para la zona (segundos) [86400]: " ttl
+        ttl=${ttl:-86400}
+    done
     
     # Zona inversa
     local crear_zona_inversa
@@ -372,7 +412,7 @@ agregar_dominio_completo() {
     if [[ "$reiniciar" == "s" || "$reiniciar" == "S" ]]; then
         aputs_info "Reiniciando servicio..."
         
-        if sudo systemctl restart named; then
+        if sudo systemctl restart named 2>/tmp/named_restart_error.log; then
             sleep 2
             if check_service_active "named"; then
                 aputs_success "Servicio reiniciado correctamente"
@@ -381,6 +421,8 @@ agregar_dominio_completo() {
             fi
         else
             aputs_error "Error al reiniciar servicio"
+            cat /tmp/named_restart_error.log | sed 's/^/  /'
+            sudo journalctl -u named -n 5 --no-pager 2>/dev/null | sed 's/^/  /'
         fi
     else
         aputs_info "Recuerde reiniciar el servicio manualmente"

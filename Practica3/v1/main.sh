@@ -8,6 +8,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Cargar utilidades
 source "${SCRIPT_DIR}/utils.sh"
+source "${SCRIPT_DIR}/validators_dns.sh"
 
 # Cargar módulos
 source "${SCRIPT_DIR}/1.verificar_instalacion.sh"

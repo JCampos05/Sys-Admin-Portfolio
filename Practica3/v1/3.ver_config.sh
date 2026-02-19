@@ -64,31 +64,31 @@ ver_config_actual() {
     
     local interface_found=""
     local server_ip=""
-    
+
     while IFS= read -r iface; do
         local ip=$(get_interface_ip "$iface")
-        if [[ "$ip" == 192.168.100.* ]]; then
+        if [[ "$ip" != "Sin IP" && "$ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             interface_found="$iface"
             server_ip="$ip"
             break
         fi
     done < <(get_network_interfaces)
-    
+
     if [[ -n "$interface_found" ]]; then
         echo "  Interfaz DNS: $interface_found"
         echo "  IP Servidor: $server_ip"
-        
+
         local netmask=$(ip -4 addr show "$interface_found" | grep -oP 'inet \K[^/]+/\d+' | cut -d'/' -f2)
         if [[ -n "$netmask" ]]; then
             echo "  Mascara: /$netmask"
         fi
-        
+
         local gateway=$(ip route | grep "^default" | grep "$interface_found" | awk '{print $3}' 2>/dev/null)
         if [[ -n "$gateway" ]]; then
             echo "  Gateway: $gateway"
         fi
     else
-        aputs_warning "No se encontro interfaz en la red 192.168.100.0/24"
+        aputs_warning "No se encontro ninguna interfaz con IP asignada"
     fi
     
     draw_line

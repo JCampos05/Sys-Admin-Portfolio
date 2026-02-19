@@ -1,8 +1,7 @@
-#!/bin/bash
-################################################################################
+#
 # crud_eliminar.sh
 # Submódulo para eliminar dominios y registros DNS
-################################################################################
+#
 
 # Cargar utilidades
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -11,14 +10,40 @@ source "${SCRIPT_DIR}/utils.sh"
 # Función para eliminar dominio de named.conf
 eliminar_zona_de_named_conf() {
     local dominio="$1"
-    
-    # Crear backup
+    local tmp_file
+    tmp_file=$(mktemp)
+
     sudo cp /etc/named.conf "/etc/named.conf.backup_$(date +%Y%m%d_%H%M%S)"
-    
-    # Eliminar entrada de zona (zona y sus 4 líneas)
-    sudo sed -i "/^\/\/ Zona: ${dominio}/,/^};/d" /etc/named.conf
-    sudo sed -i "/^\/\/ Zona inversa: ${dominio}/,/^};/d" /etc/named.conf
-    
+    sudo cp /etc/named.conf "$tmp_file"
+    sudo chmod 644 "$tmp_file"
+
+    # Eliminar zona directa (con su comentario // Zona: dominio)
+    awk '
+        /^\/\/ Zona: '"${dominio}"'$/ { skip=1 }
+        /^zone "'"${dominio}"'" IN \{/ { skip=1 }
+        skip && /^\};/ { skip=0; next }
+        skip { next }
+        { print }
+    ' "$tmp_file" > "${tmp_file}.new" && mv "${tmp_file}.new" "$tmp_file"
+
+    # Eliminar zona inversa (con su comentario // Zona inversa: dominio)
+    awk '
+        /^\/\/ Zona inversa:.*'"${dominio}"'/ { skip=1 }
+        skip && /^zone / { next }
+        skip && /^\};/ { skip=0; next }
+        skip { next }
+        { print }
+    ' "$tmp_file" > "${tmp_file}.new" && mv "${tmp_file}.new" "$tmp_file"
+
+    # Limpiar líneas vacías consecutivas
+    awk 'BEGIN{b=0} /^[[:space:]]*$/{b++; if(b<=1)print; next} {b=0;print}' \
+        "$tmp_file" > "${tmp_file}.new" && mv "${tmp_file}.new" "$tmp_file"
+
+    sudo cp "$tmp_file" /etc/named.conf
+    sudo chmod 640 /etc/named.conf
+    sudo chown root:named /etc/named.conf
+    rm -f "$tmp_file" "${tmp_file}.new"
+
     return 0
 }
 
@@ -246,7 +271,8 @@ eliminar_dominio_completo() {
     fi
     
     # Validar named.conf
-    if sudo named-checkconf; then
+    aputs_info "Validando sintaxis de named.conf..."
+    if sudo named-checkconf /etc/named.conf 2>/dev/null; then
         aputs_success "Configuracion de named.conf validada"
     else
         aputs_error "Error en named.conf"

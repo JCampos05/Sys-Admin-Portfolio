@@ -1,0 +1,32 @@
+#archivo de config DHCP
+cat /etc/dhcp/dhcpd.conf
+
+#status
+systemctl status dhcpd
+
+#concesiones activas
+cat /var/lib/dhcpd/dhcpd.leases
+
+#DNS zonas config
+cat /etc/named.conf
+
+#zonas con dominio especifico
+cat /var/named/reprobados.com.zone
+
+#status DNS
+systemctl status named
+
+/////////////////////////////////////////////////////
+
+#verificar DHCP -> scope y concesiones
+Get-DhcpServerv4Scope
+Get-DhcpServerv4OptionValue -ScopeId 192.168.100.0
+
+#concesiones activas
+Get-DhcpServerv4Lease -ScopeId 192.168.100.0
+
+#verificar DNS
+Get-DnsServerZone
+
+#registros de zonas especificas
+Get-DnsServerResourceRecord -ZoneName "reprobados.com"

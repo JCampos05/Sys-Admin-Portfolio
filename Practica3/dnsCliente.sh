@@ -100,7 +100,7 @@ nameserver 8.8.8.8
 EOF
     
     # Proteger archivo
-    sudo chattr +i /etc/resolv.conf
+    #chattr +i /etc/resolv.conf
     
     aputs_success "/etc/resolv.conf configurado y protegido"
     echo ""

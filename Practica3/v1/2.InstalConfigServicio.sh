@@ -9,8 +9,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/utils.sh"
 
 # Variables globales del módulo
-RED_SERVIDOR="192.168.100.0/24"
-IP_ESPERADA="192.168.100.10"
+RED_SERVIDOR=""
+IP_ESPERADA=""
 
 # Función para verificar si BIND ya está instalado
 verificar_bind_instalado() {
@@ -25,31 +25,22 @@ verificar_bind_instalado() {
 instalar_bind() {
     aputs_info "Iniciando instalacion de BIND9 y utilidades..."
     echo ""
-    
-    # Actualizar repositorios
+
+    # Actualizar repositorios en silencio
     aputs_info "Actualizando repositorios del sistema..."
-    if sudo dnf check-update &>/dev/null; then
-        aputs_success "Repositorios actualizados"
-    fi
-    
-    echo ""
-    
-    # Instalar BIND
+    sudo dnf check-update &>/dev/null
+
+    # Instalar BIND en silencio
     aputs_info "Instalando paquetes: bind, bind-utils..."
-    echo ""
-    
-    if sudo dnf install -y bind bind-utils; then
-        echo ""
-        aputs_success "BIND instalado correctamente"
-        
-        # Verificar versión instalada
+
+    if sudo dnf install -y bind bind-utils &>/dev/null; then
         local version=$(rpm -q bind 2>/dev/null)
+        aputs_success "BIND instalado correctamente"
         echo "  Version: $version"
-        
         return 0
     else
-        echo ""
         aputs_error "Error durante la instalacion de BIND"
+        aputs_info "Verifique su conexion a internet y los repositorios del sistema"
         return 1
     fi
 }
@@ -71,16 +62,17 @@ habilitar_servicio() {
 verificar_configuracion_red() {
     draw_header "Verificaciones de Red"
     
-    aputs_info "Buscando interfaz en la red $RED_SERVIDOR..."
+    aputs_info "Detectando interfaz de red activa con IP asignada..."
     echo ""
     
     local interface_encontrada=""
     local ip_actual=""
     
-    # Buscar interfaz en la red 192.168.100.0/24
+    # Buscar CUALQUIER interfaz con IP (excepto loopback)
     while IFS= read -r iface; do
         local ip=$(get_interface_ip "$iface")
-        if [[ "$ip" == 192.168.100.* ]]; then
+        # Verificar que tenga IP válida (no "Sin IP")
+        if [[ "$ip" != "Sin IP" && "$ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             interface_encontrada="$iface"
             ip_actual="$ip"
             break
@@ -88,9 +80,7 @@ verificar_configuracion_red() {
     done < <(get_network_interfaces)
     
     if [[ -z "$interface_encontrada" ]]; then
-        aputs_error "No se encontro interfaz en la red $RED_SERVIDOR"
-        echo ""
-        aputs_warning "Se esperaba encontrar una interfaz con IP 192.168.100.x"
+        aputs_error "No se encontro ninguna interfaz con IP asignada"
         echo ""
         
         # Mostrar interfaces disponibles
@@ -101,39 +91,81 @@ verificar_configuracion_red() {
             echo "  - $iface: $ip"
         done < <(get_network_interfaces)
         
+        echo ""
+        aputs_info "Configure una IP en alguna interfaz antes de continuar"
+        
         return 1
     fi
     
+    # Calcular red automáticamente
+    local red_calculada
+    red_calculada=$(echo "$ip_actual" | cut -d. -f1-3)
+    RED_SERVIDOR="${red_calculada}.0/24"
+    
     aputs_success "Interfaz encontrada: $interface_encontrada"
     echo "  IP actual: $ip_actual"
+    echo "  Red detectada: $RED_SERVIDOR"
     echo ""
     
-    # Verificar si es la IP esperada
-    if [[ "$ip_actual" == "$IP_ESPERADA" ]]; then
-        aputs_success "IP configurada correctamente: $IP_ESPERADA"
-        echo ""
+    # Preguntar si desea continuar con esta configuración
+    local respuesta
+    read -rp "¿Desea usar esta interfaz para el servidor DNS? (s/n) [s]: " respuesta
+    respuesta=${respuesta:-s}
+    
+    if [[ "$respuesta" == "s" || "$respuesta" == "S" ]]; then
+        aputs_success "Configuracion aceptada"
         
-        # Exportar para uso posterior
+        # Exportar variables globales
         export INTERFAZ_DNS="$interface_encontrada"
         export IP_SERVIDOR="$ip_actual"
+        export RED_SERVIDOR
         
         return 0
     else
-        aputs_warning "IP actual ($ip_actual) difiere de la IP esperada ($IP_ESPERADA)"
+        aputs_info "Configuracion cancelada"
+        echo ""
+        aputs_info "Seleccione manualmente la interfaz a usar"
+        
+        # Permitir selección manual
+        echo ""
+        aputs_info "Interfaces disponibles:"
         echo ""
         
-        local respuesta
-        read -rp "¿Desea continuar con la IP actual? (s/n): " respuesta
+        local interfaces=()
+        while IFS= read -r iface; do
+            local ip=$(get_interface_ip "$iface")
+            if [[ "$ip" != "Sin IP" ]]; then
+                interfaces+=("$iface")
+                echo "  ${#interfaces[@]}) $iface - $ip"
+            fi
+        done < <(get_network_interfaces)
         
-        if [[ "$respuesta" == "s" || "$respuesta" == "S" ]]; then
-            aputs_info "Continuando con IP actual: $ip_actual"
-            export INTERFAZ_DNS="$interface_encontrada"
-            export IP_SERVIDOR="$ip_actual"
+        if [[ ${#interfaces[@]} -eq 0 ]]; then
+            aputs_error "No hay interfaces con IP disponibles"
+            return 1
+        fi
+        
+        echo ""
+        local seleccion
+        read -rp "Seleccione el numero de interfaz [1-${#interfaces[@]}]: " seleccion
+        
+        if [[ $seleccion -ge 1 && $seleccion -le ${#interfaces[@]} ]]; then
+            local iface_seleccionada="${interfaces[$((seleccion-1))]}"
+            local ip_seleccionada=$(get_interface_ip "$iface_seleccionada")
+            
+            # Calcular red
+            red_calculada=$(echo "$ip_seleccionada" | cut -d. -f1-3)
+            RED_SERVIDOR="${red_calculada}.0/24"
+            
+            aputs_success "Interfaz seleccionada: $iface_seleccionada ($ip_seleccionada)"
+            
+            export INTERFAZ_DNS="$iface_seleccionada"
+            export IP_SERVIDOR="$ip_seleccionada"
+            export RED_SERVIDOR
+            
             return 0
         else
-            aputs_info "Configuracion cancelada"
-            echo ""
-            aputs_info "Configure manualmente la IP $IP_ESPERADA antes de continuar"
+            aputs_error "Seleccion invalida"
             return 1
         fi
     fi
@@ -147,12 +179,12 @@ solicitar_parametros_dns() {
     echo ""
     
     # Red permitida para consultas
-    local red_base=$(echo "$IP_SERVIDOR" | cut -d. -f1-3)
-    local red_default="${red_base}.0/24"
-    
+    local red_default="${IP_SERVIDOR}/32"
+
     aputs_info "Red permitida para consultas DNS:"
-    read -rp "  [Default: $red_default]: " RED_PERMITIDA
-    RED_PERMITIDA=${RED_PERMITIDA:-$red_default}
+    aputs_info "IP actual del servidor: $IP_SERVIDOR"
+    read -rp "  [Default: any]: " RED_PERMITIDA
+    RED_PERMITIDA=${RED_PERMITIDA:-any}
     
     echo ""
     
@@ -414,12 +446,12 @@ configurar_firewall() {
     # Sumamente Critico: Verificar y configurar zona 'internal' si existe ens192 <-----------------------------------
     aputs_info "Configurando zonas de firewall para interfaces..."
     
-    # Detectar si existe ens192
-    if ip link show ens192 &>/dev/null; then
-        aputs_info "Interfaz ens192 detectada, configurando zona internal..."
-        
-        # Asignar ens192 a zona internal
-        sudo firewall-cmd --permanent --zone=internal --change-interface=ens192 &>/dev/null
+    # Usar la interfaz DNS detectada dinámicamente
+    if [[ -n "$INTERFAZ_DNS" ]] && ip link show "$INTERFAZ_DNS" &>/dev/null; then
+        aputs_info "Interfaz $INTERFAZ_DNS detectada, configurando zona internal..."
+    
+        # Asignar interfaz DNS a zona internal
+        sudo firewall-cmd --permanent --zone=internal --change-interface="$INTERFAZ_DNS" &>/dev/null
         
         # Agregar servicios CRÍTICOS a zona internal
         sudo firewall-cmd --permanent --zone=internal --add-service=dns &>/dev/null
