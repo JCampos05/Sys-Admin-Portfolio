@@ -16,3 +16,12 @@ scp utils.sh \
     monitor_dns.sh \
     main.sh \
     usuario@192.168.100.10:~/directorio/
+
+
+
+#en dado caso de que tire error/warning la conexión SSH
+ssh-keygen -R ip_Server
+
+
+# mandar TODO el contenido de un dir
+scp *.* adminuser@192.168.70.130:~
