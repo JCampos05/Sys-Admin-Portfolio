@@ -265,7 +265,7 @@ function http_consultar_versiones {
     param([string]$Servicio)
 
     $paquete = http_nombre_paquete $Servicio
-
+    # <------------------------------------------------------------
     if ($Servicio -eq "iis") {
         # IIS no tiene versiones seleccionables via choco — usa la del sistema
         $iisVer = (Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\InetStp" `

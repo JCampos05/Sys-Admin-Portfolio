@@ -1,0 +1,20 @@
+# Agregar el binding FTP al sitio directamente en applicationHost.config
+Import-Module WebAdministration
+New-WebBinding -Name "FTP Site" -Protocol ftp -Port 21 -IPAddress "*"
+Write-Host "Binding agregado"
+
+# Verificar
+Select-Xml -Path "C:\Windows\System32\inetsrv\config\applicationHost.config" `
+    -XPath "//site[contains(@name,'FTP')]//binding" | ForEach-Object {
+    Write-Host $_.Node.OuterXml
+}
+
+
+while ($true) {
+    $ts = Get-Date -Format "HH:mm:ss.fff"
+    $w3  = (Get-Service W3SVC   -EA SilentlyContinue).Status
+    $ftp = (Get-Service FTPSVC  -EA SilentlyContinue).Status
+    $sites = Get-Website 2>$null | ForEach-Object { "$($_.Name)=$($_.State)" }
+    Write-Host "$ts  W3SVC=$w3  FTPSVC=$ftp  $($sites -join ' | ')"
+    Start-Sleep -Milliseconds 500
+}

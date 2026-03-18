@@ -28,12 +28,34 @@ $Script:HTTP_WINSVC_TOMCAT = if ($_tomcatSvc) { $_tomcatSvc.Name } else { "Tomca
 $Script:HTTP_DIR_IIS = "C:\inetpub\wwwroot"
 $Script:HTTP_DIR_APACHE = "C:\tools\httpd\htdocs"
 $Script:HTTP_DIR_NGINX = "C:\tools\nginx\html"
-$Script:HTTP_DIR_TOMCAT = "C:\ProgramData\Tomcat9\webapps\ROOT"
+# Detectar webapps\ROOT real de Tomcat
+$Script:HTTP_DIR_TOMCAT = "C:\ProgramData\Tomcat9\webapps\ROOT"  # fallback
+$_tomcatWebCandidatos = @(
+    "C:\Program Files\Apache Software Foundation\Tomcat 10.1\webapps\ROOT",
+    "C:\Program Files\Apache Software Foundation\Tomcat 10.0\webapps\ROOT",
+    "C:\Program Files\Apache Software Foundation\Tomcat 9.0\webapps\ROOT",
+    "C:\ProgramData\Tomcat10\webapps\ROOT",
+    "C:\ProgramData\Tomcat9\webapps\ROOT"
+)
+foreach ($_tw in $_tomcatWebCandidatos) {
+    if (Test-Path $_tw) { $Script:HTTP_DIR_TOMCAT = $_tw; break }
+}
 
 $Script:HTTP_CONF_IIS = "C:\Windows\System32\inetsrv\config\applicationHost.config"
 $Script:HTTP_CONF_APACHE = "C:\tools\httpd\conf\httpd.conf"
 $Script:HTTP_CONF_NGINX = "C:\tools\nginx\conf\nginx.conf"
-$Script:HTTP_CONF_TOMCAT = "C:\ProgramData\Tomcat9\conf\server.xml"
+# Detectar server.xml real de Tomcat
+$Script:HTTP_CONF_TOMCAT = "C:\ProgramData\Tomcat9\conf\server.xml"  # fallback
+$_tomcatXmlCandidatos = @(
+    "C:\Program Files\Apache Software Foundation\Tomcat 10.1\conf\server.xml",
+    "C:\Program Files\Apache Software Foundation\Tomcat 10.0\conf\server.xml",
+    "C:\Program Files\Apache Software Foundation\Tomcat 9.0\conf\server.xml",
+    "C:\ProgramData\Tomcat10\conf\server.xml",
+    "C:\ProgramData\Tomcat9\conf\server.xml"
+)
+foreach ($_tx in $_tomcatXmlCandidatos) {
+    if (Test-Path $_tx) { $Script:HTTP_CONF_TOMCAT = $_tx; break }
+}
 
 # choco puede instalar en rutas distintas a las constantes default.
 # Llama a esta funcion al arrancar para actualizar las constantes.
@@ -99,8 +121,11 @@ function http_detectar_rutas_reales {
 
     # ── Tomcat ────────────────────────────────────────────────────────────
     $tomcatCandidatos = @(
-        "C:\ProgramData\Tomcat9\conf\server.xml",
+        "C:\Program Files\Apache Software Foundation\Tomcat 10.1\conf\server.xml",
+        "C:\Program Files\Apache Software Foundation\Tomcat 10.0\conf\server.xml",
+        "C:\Program Files\Apache Software Foundation\Tomcat 9.0\conf\server.xml",
         "C:\ProgramData\Tomcat10\conf\server.xml",
+        "C:\ProgramData\Tomcat9\conf\server.xml",
         "C:\tools\tomcat\conf\server.xml"
     )
     foreach ($tc in $tomcatCandidatos) {
@@ -405,14 +430,20 @@ function http_recargar_servicio {
     $winsvc = http_nombre_winsvc $Servicio
     aputs_info "Recargando configuracion de $winsvc..."
 
-    # IIS tiene iisreset para recarga sin parar el servicio
+    # IIS: NO usar iisreset ni Restart-Service — ambos matan FTPSVC
     if ($Servicio -eq "iis") {
-        $resultado = iisreset /noforce 2>&1
-        if ($LASTEXITCODE -eq 0) {
-            aputs_success "IIS recargado correctamente"
+        aputs_info "IIS: recargando configuracion sin iisreset (proteccion FTPSVC)..."
+        try {
+            Import-Module WebAdministration -ErrorAction Stop
+            if (-not (check_service_active "W3SVC")) {
+                Start-Service "W3SVC" -ErrorAction SilentlyContinue
+                Start-Sleep -Seconds 2
+            }
+            aputs_success "IIS activo — configuracion aplicada en caliente"
             return $true
+        } catch {
+            return (check_service_active "W3SVC")
         }
-        aputs_warning "iisreset fallo — intentando restart..."
     }
 
     return (http_reiniciar_servicio $Servicio)
@@ -421,8 +452,68 @@ function http_recargar_servicio {
 function http_reiniciar_servicio {
     param([string]$Servicio)
     $winsvc = http_nombre_winsvc $Servicio
-    aputs_info "Reiniciando $winsvc..."
 
+    # IIS: NUNCA reiniciar W3SVC — comparte proceso con FTPSVC y lo mata.
+    # En su lugar: verificar W3SVC, garantizar binding FTP, iniciar FTP Site si cayó.
+    if ($Servicio -eq "iis" -or $winsvc -eq "W3SVC") {
+        aputs_info "IIS: aplicando cambios sin reiniciar W3SVC (proteccion FTPSVC)..."
+        $appcmdExe = "$env:SystemRoot\system32\inetsrv\appcmd.exe"
+        try {
+            Import-Module WebAdministration -ErrorAction Stop
+
+            # 1. Asegurar que W3SVC corre
+            if (-not (check_service_active "W3SVC")) {
+                Start-Service "W3SVC" -ErrorAction SilentlyContinue
+                Start-Sleep -Seconds 2
+            }
+            aputs_success "W3SVC activo"
+
+            # 2. Garantizar binding FTP *:21 — puede estar vacío en applicationHost.config
+            # cuando IIS recarga el config por cualquier cambio de binding, el FTP Site
+            # arranca sin puerto si <bindings></bindings> estaba vacío
+            $ftpSite = Get-Website | Where-Object { $_.Name -match "FTP" } |
+                Select-Object -First 1
+            if ($ftpSite) {
+                $ftpSiteName = $ftpSite.Name
+
+                # Garantizar binding
+                $ftpBinding = Get-WebBinding -Name $ftpSiteName -Protocol "ftp" `
+                    -ErrorAction SilentlyContinue
+                if (-not $ftpBinding) {
+                    aputs_info "Binding FTP ausente — restaurando *:21 en '$ftpSiteName'..."
+                    New-WebBinding -Name $ftpSiteName -Protocol ftp -Port 21 `
+                        -IPAddress "*" -ErrorAction SilentlyContinue | Out-Null
+                    aputs_success "Binding FTP *:21 restaurado"
+                }
+
+                # Garantizar serverAutoStart=true
+                Set-ItemProperty "IIS:\Sites\$ftpSiteName" `
+                    -Name serverAutoStart -Value $true -ErrorAction SilentlyContinue
+
+                # Iniciar el FTP Site si está detenido
+                $ftpEstado = (Get-Website -Name $ftpSiteName).State
+                if ($ftpEstado -ne "Started") {
+                    aputs_info "Iniciando FTP Site '$ftpSiteName'..."
+                    & $appcmdExe start site /site.name:"$ftpSiteName" 2>$null | Out-Null
+                    Start-Sleep -Seconds 2
+                    $ftpEstado = (Get-Website -Name $ftpSiteName).State
+                }
+
+                if ($ftpEstado -eq "Started") {
+                    aputs_success "FTP Site '$ftpSiteName' activo — FTP restaurado"
+                } else {
+                    aputs_warning "FTP Site no inició — ejecute: appcmd start site /site.name:`"$ftpSiteName`""
+                }
+            }
+
+            return $true
+        } catch {
+            aputs_warning "WebAdministration no disponible: $($_.Exception.Message)"
+            return (check_service_active "W3SVC")
+        }
+    }
+
+    aputs_info "Reiniciando $winsvc..."
     try {
         Restart-Service -Name $winsvc -Force -ErrorAction Stop
         Start-Sleep -Seconds 2
