@@ -1,0 +1,11 @@
+Nombre,Apellido,Usuario,Password,Departamento
+User,Uno,user01,Pass1234!,Cuates
+User,Dos,user02,Pass1234!,Cuates
+User,Tres,user03,Pass1234!,Cuates
+User,Cuatro,user04,Pass1234!,Cuates
+User,Cinco,user05,Pass1234!,Cuates
+User,Seis,user06,Pass1234!,NoCuates
+User,Siete,user07,Pass1234!,NoCuates
+User,Ocho,user08,Pass1234!,NoCuates
+User,Nueve,user09,Pass1234!,NoCuates
+User,Diez,user10,Pass1234!,NoCuates
